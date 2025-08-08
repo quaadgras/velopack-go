@@ -33,17 +33,17 @@ func update() error {
 	if err != nil {
 		return err
 	}
-	latest, status, err := velopack.CheckForUpdates(manager);
+	latest, status, err := manager.CheckForUpdates();
 	if err != nil {
 		return err
 	}
 	if status == velopack.UpdateAvailable {
-		if err := velopack.DownloadUpdates(latest, func(progress uint){
+		if err := manager.DownloadUpdates(latest, func(progress uint){
 			// show progress to the user
 		}); err != nil {
 			return err
 		}
-		if err := update.ApplyUpdatesAndRestart(latest); err != nil {
+		if err := manager.ApplyUpdatesAndRestart(latest); err != nil {
 			return err
 		}
 	}
