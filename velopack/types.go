@@ -52,7 +52,7 @@ type SourceCustomCallbacks struct {
 	ReleaseFeedFunc func(psz_releases_name string) json.RawMessage
 	/*
 	   DownloadAssetFunc is expected to download the provided asset to the provided local file path.
-	   Througout, you can use the progress callback to write progress reports (0-100). The function should
+	   Throughout, you can use the progress callback to write progress reports (0-100). The function should
 	   return true if the download was successful, false otherwise.
 	*/
 	DownloadAssetFunc func(asset *Asset, local_path string, progress_callback func(progress int16)) bool
