@@ -1,5 +1,6 @@
 # Velopack Go
 [![Go Reference](https://pkg.go.dev/badge/quaadgras/velopack-go.svg)](https://pkg.go.dev/quaadgras/velopack-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/quaadgras/velopack-go)](https://goreportcard.com/report/github.com/quaadgras/velopack-go)
 
 It's easy to distribute Go desktop applications with automatic updates!
 
