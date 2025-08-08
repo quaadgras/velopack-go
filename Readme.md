@@ -11,7 +11,7 @@ $ `go get github.com/quaadgras/velopack-go`
 2. Add automatic updates to your project:
 
 Here's as a one-liner, that will download updates in the background and
-apply them next time the application starts up:
+apply them the next time the application starts up:
 ```go
 go velopack.DownloadUpdatesInTheBackground("https://the.place/you-will-host/updates")
 ```
