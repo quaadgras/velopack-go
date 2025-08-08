@@ -16,7 +16,7 @@ apply them the next time the application starts up:
 go velopack.DownloadUpdatesInTheBackground("https://the.place/you-will-host/updates")
 ```
 
-You can also develop your own update function:
+Alternatively, you can also develop your own update function:
 ```go
 package main
 
