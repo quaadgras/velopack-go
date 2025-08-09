@@ -426,13 +426,17 @@ func NewSourceCustomCallback(callbacks SourceCustomCallbacks) (*UpdateSource, er
 //   - If there is no delta update available, or there is an error preparing delta
 //     packages, this method will fall back to downloading the full version of the update.
 func (up *UpdateManager) DownloadUpdates(update_info *UpdateInfo, progress func(progress uint)) error {
+	var progress_callback cgo.Handle = 0
+	if progress != nil {
+		progress_callback = cgo.NewHandle(progress)
+	}
 	var info_handle *C.vpkc_update_info_t
 	if update_info != nil {
 		info_handle = (*C.vpkc_update_info_t)(update_info.handle)
 	}
 	if !C.go_vpkc_download_updates(up.handle,
 		info_handle,
-		C.uintptr_t(cgo.NewHandle(progress)),
+		C.uintptr_t(progress_callback),
 	) {
 		return get_last_error()
 	}
