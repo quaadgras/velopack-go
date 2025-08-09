@@ -90,6 +90,9 @@ func go_download_asset_callback(user_data uintptr, asset *C.vpkc_asset_t, psz_lo
 
 //export go_progress_callback
 func go_progress_callback(user_data uintptr, progress C.size_t) {
+	if user_data == 0 {
+		return
+	}
 	cgo.Handle(user_data).Value().(func(uint))(uint(progress))
 }
 
