@@ -174,7 +174,7 @@ func toAsset(asset *C.vpkc_asset_t) *Asset {
 func (info *UpdateInfo) load(update_info *C.vpkc_update_info_t) *UpdateInfo {
 	var deltas []*Asset
 	if update_info.DeltasToTarget != nil {
-		for ptr := update_info.DeltasToTarget; *ptr != nil; ptr = (**C.vpkc_asset_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ptr)) + unsafe.Sizeof(*ptr))) {
+		for ptr := update_info.DeltasToTarget; ptr != nil && *ptr != nil; ptr = (**C.vpkc_asset_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ptr)) + unsafe.Sizeof(*ptr))) {
 			deltas = append(deltas, toAsset(*ptr))
 		}
 	}
