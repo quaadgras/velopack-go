@@ -173,10 +173,9 @@ func toAsset(asset *C.vpkc_asset_t) *Asset {
 
 func (info *UpdateInfo) load(update_info *C.vpkc_update_info_t) *UpdateInfo {
 	var deltas []*Asset
-	if update_info.DeltasToTarget != nil {
-		for ptr := update_info.DeltasToTarget; ptr != nil && *ptr != nil; ptr = (**C.vpkc_asset_t)(unsafe.Pointer(uintptr(unsafe.Pointer(ptr)) + unsafe.Sizeof(*ptr))) {
-			deltas = append(deltas, toAsset(*ptr))
-		}
+	var sliced = unsafe.Slice(update_info.DeltasToTarget, update_info.DeltasToTargetCount)
+	for _, delta := range sliced {
+		deltas = append(deltas, toAsset(delta))
 	}
 	if info.handle != unsafe.Pointer(update_info) {
 		runtime.AddCleanup(info, func(handle *C.vpkc_update_info_t) {
@@ -344,11 +343,12 @@ func (up *UpdateManager) CheckForUpdates() (*UpdateInfo, UpdateStatus, error) {
 	return &info, UpdateStatus(check_result), nil
 }
 
-func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.bool, int, **C.char, int, bool) {
+func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.bool, int, **C.char, int, bool, func()) {
 	var silent C.bool
 	var restart []*C.char
 	var pid int
 	var has_pid bool
+	var defers []func()
 	for _, option := range options {
 		switch option := option.(type) {
 		case Silent:
@@ -357,7 +357,7 @@ func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.b
 			restart = make([]*C.char, len(option)+1) // +1 for null terminator
 			for i, arg := range option {
 				arg_cstr := C.CString(arg)
-				defer C.free(unsafe.Pointer(arg_cstr))
+				defers = append(defers, func() { C.free(unsafe.Pointer(arg_cstr)) })
 				restart[i] = arg_cstr
 			}
 		case UnsafeProcessID:
@@ -369,7 +369,11 @@ func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.b
 	if len(restart) > 0 {
 		restartPtr = (**C.char)(unsafe.Pointer(&restart[0]))
 	}
-	return silent, len(restart), restartPtr, pid, has_pid
+	return silent, len(restart), restartPtr, pid, has_pid, func() {
+		for _, def := range defers {
+			def()
+		}
+	}
 }
 
 // WaitForExitThenApplyUpdates this will launch the Velopack updater and tell it to wait for this program
@@ -377,7 +381,8 @@ func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.b
 //   - You should then clean up any state and exit your app. The updater will apply updates and then
 //   - (if [Restart] specified) restart your app. The updater will only wait for 60 seconds before giving up.
 func (up *UpdateManager) WaitForExitThenApplyUpdates(update either[*UpdateInfo, *Asset], options ...upto3[Silent, Restart, UnsafeProcessID]) error {
-	silent, restart, restartPtr, pid, has_pid := assetSilentRestart(options...)
+	silent, restart, restartPtr, pid, has_pid, defers := assetSilentRestart(options...)
+	defer defers()
 	p_asset := (*C.vpkc_asset_t)(nil)
 	if update != nil {
 		switch update := update.(type) {
