@@ -1,4 +1,4 @@
-//go:build cgo && (windows || linux || darwin) && (arm64 || amd64)
+//go:build cgo && (windows || linux || darwin) && (arm64 || amd64) && !android
 
 // Package velopack provides a Go interface to the Velopack library for managing software updates and distribution on desktop.
 package velopack

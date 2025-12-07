@@ -1,4 +1,4 @@
-//go:build !(cgo && (windows || linux || darwin) && (arm64 || amd64))
+//go:build !(cgo && (windows || linux || darwin) && (arm64 || amd64)) || android
 
 package velopack
 
