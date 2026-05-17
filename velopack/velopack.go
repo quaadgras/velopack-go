@@ -79,7 +79,7 @@ func go_free_release_feed_callback(_ uintptr, psz_feed *C.char) {
 func go_download_asset_callback(user_data uintptr, asset *C.vpkc_asset_t, psz_local_path *C.char, progress_callback_id C.size_t) C.bool {
 	callbacks := cgo.Handle(user_data).Value().(SourceCustomCallbacks)
 	success := callbacks.DownloadAssetFunc(
-		toAsset(asset),
+		toAsset(asset, false),
 		C.GoString(psz_local_path),
 		func(progress int16) {
 			C.vpkc_source_report_progress(progress_callback_id, C.int16_t(progress))
@@ -149,7 +149,7 @@ func go_log_callback(_ uintptr, level, psz_message *C.char) {
 	app.Logger(C.GoString(level), C.GoString(psz_message))
 }
 
-func toAsset(asset *C.vpkc_asset_t) *Asset {
+func toAsset(asset *C.vpkc_asset_t, owned bool) *Asset {
 	if asset == nil {
 		return nil
 	}
@@ -165,9 +165,11 @@ func toAsset(asset *C.vpkc_asset_t) *Asset {
 		NotesMarkdown: C.GoString(asset.NotesMarkdown),
 		NotesHTML:     C.GoString(asset.NotesHtml),
 	}
-	runtime.AddCleanup(converted, func(handle unsafe.Pointer) {
-		C.vpkc_free_asset((*C.vpkc_asset_t)(handle))
-	}, converted.handle)
+	if owned {
+		runtime.AddCleanup(converted, func(handle unsafe.Pointer) {
+			C.vpkc_free_asset((*C.vpkc_asset_t)(handle))
+		}, converted.handle)
+	}
 	return converted
 }
 
@@ -175,7 +177,7 @@ func (info *UpdateInfo) load(update_info *C.vpkc_update_info_t) *UpdateInfo {
 	var deltas []*Asset
 	var sliced = unsafe.Slice(update_info.DeltasToTarget, update_info.DeltasToTargetCount)
 	for _, delta := range sliced {
-		deltas = append(deltas, toAsset(delta))
+		deltas = append(deltas, toAsset(delta, false))
 	}
 	if info.handle != unsafe.Pointer(update_info) {
 		runtime.AddCleanup(info, func(handle *C.vpkc_update_info_t) {
@@ -184,8 +186,8 @@ func (info *UpdateInfo) load(update_info *C.vpkc_update_info_t) *UpdateInfo {
 	}
 	*info = UpdateInfo{
 		handle:            unsafe.Pointer(update_info),
-		TargetFullRelease: toAsset(update_info.TargetFullRelease),
-		BaseRelease:       toAsset(update_info.BaseRelease),
+		TargetFullRelease: toAsset(update_info.TargetFullRelease, false),
+		BaseRelease:       toAsset(update_info.BaseRelease, false),
 		DeltasToTarget:    deltas,
 		IsDowngrade:       bool(update_info.IsDowngrade),
 	}
@@ -324,7 +326,7 @@ func (up *UpdateManager) UpdatePendingRestart() (*Asset, bool) {
 	if !C.vpkc_update_pending_restart(up.handle, &asset) {
 		return nil, false
 	}
-	return toAsset(asset), true
+	return toAsset(asset, true), true
 }
 
 // CheckForUpdates Checks for updates. If there are updates available, this method will return an [UpdateInfo]
