@@ -299,18 +299,24 @@ func NewUpdateManagerFromSource(source *UpdateSource, options ...updateOptionsAn
 
 // AppID returns the currently installed app id.
 func (up *UpdateManager) AppID() string {
-	var len = C.vpkc_get_app_id(up.handle, nil, 0)
-	var buf = make([]byte, len+1) // +1 for null terminator
+	var len = C.vpkc_get_app_id(up.handle, nil, 0) // includes the null terminator
+	if len == 0 {
+		return ""
+	}
+	var buf = make([]byte, len)
 	C.vpkc_get_app_id(up.handle, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
-	return string(buf[:len]) // return the string without the null terminator
+	return string(buf[:len-1]) // strip the null terminator
 }
 
 // CurrentlyInstalledVersion returns the currently installed version of the app.
 func (up *UpdateManager) CurrentlyInstalledVersion() string {
-	var len = C.vpkc_get_current_version(up.handle, nil, 0)
-	var buf = make([]byte, len+1) // +1 for null terminator
+	var len = C.vpkc_get_current_version(up.handle, nil, 0) // includes the null terminator
+	if len == 0 {
+		return ""
+	}
+	var buf = make([]byte, len)
 	C.vpkc_get_current_version(up.handle, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
-	return string(buf[:len]) // return the string without the null terminator
+	return string(buf[:len-1]) // strip the null terminator
 }
 
 // IsPortable returns whether the app is in portable mode. On Windows this can be true or false.
