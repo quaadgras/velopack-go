@@ -450,7 +450,9 @@ func (up *UpdateManager) DownloadUpdates(update_info *UpdateInfo, progress func(
 	) {
 		return get_last_error()
 	}
-	update_info.load((*C.vpkc_update_info_t)(update_info.handle))
+	if update_info != nil {
+		update_info.load((*C.vpkc_update_info_t)(update_info.handle))
+	}
 	return nil
 }
 
