@@ -394,12 +394,16 @@ func (up *UpdateManager) WaitForExitThenApplyUpdates(update either[*UpdateInfo, 
 			p_asset = (*C.vpkc_asset_t)(update.TargetFullRelease.handle)
 		}
 	}
+	var restart_args_count C.size_t
+	if restart > 0 {
+		restart_args_count = C.size_t(restart - 1) // -1 for the null terminator slot, not a real arg
+	}
 	if has_pid {
-		if !C.vpkc_unsafe_apply_updates(up.handle, p_asset, silent, C.uint32_t(pid), restart != 0, restartPtr, C.size_t(restart-1)) {
+		if !C.vpkc_unsafe_apply_updates(up.handle, p_asset, silent, C.uint32_t(pid), restart != 0, restartPtr, restart_args_count) {
 			return get_last_error()
 		}
 	}
-	if !C.vpkc_wait_exit_then_apply_updates(up.handle, p_asset, silent, restart != 0, restartPtr, C.size_t(restart-1)) {
+	if !C.vpkc_wait_exit_then_apply_updates(up.handle, p_asset, silent, restart != 0, restartPtr, restart_args_count) {
 		return get_last_error()
 	}
 	return nil
