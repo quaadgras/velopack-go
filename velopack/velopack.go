@@ -299,18 +299,24 @@ func NewUpdateManagerFromSource(source *UpdateSource, options ...updateOptionsAn
 
 // AppID returns the currently installed app id.
 func (up *UpdateManager) AppID() string {
-	var len = C.vpkc_get_app_id(up.handle, nil, 0)
-	var buf = make([]byte, len+1) // +1 for null terminator
+	var len = C.vpkc_get_app_id(up.handle, nil, 0) // includes the null terminator
+	if len == 0 {
+		return ""
+	}
+	var buf = make([]byte, len)
 	C.vpkc_get_app_id(up.handle, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
-	return string(buf[:len]) // return the string without the null terminator
+	return string(buf[:len-1]) // strip the null terminator
 }
 
 // CurrentlyInstalledVersion returns the currently installed version of the app.
 func (up *UpdateManager) CurrentlyInstalledVersion() string {
-	var len = C.vpkc_get_current_version(up.handle, nil, 0)
-	var buf = make([]byte, len+1) // +1 for null terminator
+	var len = C.vpkc_get_current_version(up.handle, nil, 0) // includes the null terminator
+	if len == 0 {
+		return ""
+	}
+	var buf = make([]byte, len)
 	C.vpkc_get_current_version(up.handle, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
-	return string(buf[:len]) // return the string without the null terminator
+	return string(buf[:len-1]) // strip the null terminator
 }
 
 // IsPortable returns whether the app is in portable mode. On Windows this can be true or false.
@@ -394,12 +400,16 @@ func (up *UpdateManager) WaitForExitThenApplyUpdates(update either[*UpdateInfo, 
 			p_asset = (*C.vpkc_asset_t)(update.TargetFullRelease.handle)
 		}
 	}
+	var restart_args_count C.size_t
+	if restart > 0 {
+		restart_args_count = C.size_t(restart - 1) // -1 for the null terminator slot, not a real arg
+	}
 	if has_pid {
-		if !C.vpkc_unsafe_apply_updates(up.handle, p_asset, silent, C.uint32_t(pid), restart != 0, restartPtr, C.size_t(restart-1)) {
+		if !C.vpkc_unsafe_apply_updates(up.handle, p_asset, silent, C.uint32_t(pid), restart != 0, restartPtr, restart_args_count) {
 			return get_last_error()
 		}
 	}
-	if !C.vpkc_wait_exit_then_apply_updates(up.handle, p_asset, silent, restart != 0, restartPtr, C.size_t(restart-1)) {
+	if !C.vpkc_wait_exit_then_apply_updates(up.handle, p_asset, silent, restart != 0, restartPtr, restart_args_count) {
 		return get_last_error()
 	}
 	return nil
@@ -450,7 +460,9 @@ func (up *UpdateManager) DownloadUpdates(update_info *UpdateInfo, progress func(
 	) {
 		return get_last_error()
 	}
-	update_info.load((*C.vpkc_update_info_t)(update_info.handle))
+	if update_info != nil {
+		update_info.load((*C.vpkc_update_info_t)(update_info.handle))
+	}
 	return nil
 }
 
