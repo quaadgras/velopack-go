@@ -237,8 +237,21 @@ func optionsLocator(options ...updateOptionsAndLocatorConfig) (*C.vpkc_update_op
 		for _, option := range options {
 			switch option := option.(type) {
 			case UpdateOptions:
-				ExplicitChannel := C.CString(option.ExplicitChannel)
-				defer C.free(unsafe.Pointer(ExplicitChannel))
+				// Velopack.h: ExplicitChannel "should usually be left
+				// None/NULL". C.CString("") still returns a non-NULL
+				// pointer to an empty string, so any caller who passes
+				// UpdateOptions for AllowVersionDowngrade or
+				// MaximumDeltasBeforeFallback alone — leaving
+				// ExplicitChannel at its Go zero value — was silently
+				// overriding the channel to "" instead of leaving it
+				// unset, breaking CheckForUpdates against a channelled
+				// feed (e.g. releases.win.json) for no reason the caller
+				// asked for.
+				var ExplicitChannel *C.char
+				if option.ExplicitChannel != "" {
+					ExplicitChannel = C.CString(option.ExplicitChannel)
+					defer C.free(unsafe.Pointer(ExplicitChannel))
+				}
 				p_options = &C.vpkc_update_options_t{
 					AllowVersionDowngrade:       C.bool(option.AllowVersionDowngrade),
 					ExplicitChannel:             ExplicitChannel,
