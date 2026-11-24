@@ -146,6 +146,13 @@ type UpdateSource struct {
 }
 
 // UpdateManager is an opaque handle.
+//
+// keepAlive note: the native objects behind UpdateManager, UpdateInfo, Asset
+// and UpdateSource are freed by a runtime.AddCleanup once the Go value is
+// unreachable. A method that passes x.handle to C must runtime.KeepAlive(x)
+// until the C call returns: otherwise the GC may run the cleanup while Rust
+// is still using the pointer (a check or download can block for seconds on
+// the network), which is a use-after-free.
 type UpdateManager struct {
 	handle           unsafe.Pointer
 	custom_callbacks []SourceCustomCallbacks // simple keep alive so that callbacks are not garbage collected whilst the UpdateManager is reachable.

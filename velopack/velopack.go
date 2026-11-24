@@ -299,6 +299,7 @@ func NewUpdateManager(psz_url_or_path string, options ...updateOptionsAndLocator
 
 // NewUpdateManagerFromSource creates a new UpdateManager instance using the given UpdateSource.
 func NewUpdateManagerFromSource(source *UpdateSource, options ...updateOptionsAndLocatorConfig) (*UpdateManager, error) {
+	defer runtime.KeepAlive(source)
 	p_options, p_locator := optionsLocator(options...)
 	manager := new(UpdateManager)
 	if !C.vpkc_new_update_manager_with_source(source.handle, p_options, p_locator, &manager.handle) {
@@ -312,6 +313,7 @@ func NewUpdateManagerFromSource(source *UpdateSource, options ...updateOptionsAn
 
 // AppID returns the currently installed app id.
 func (up *UpdateManager) AppID() string {
+	defer runtime.KeepAlive(up)
 	var len = C.vpkc_get_app_id(up.handle, nil, 0) // includes the null terminator
 	if len == 0 {
 		return ""
@@ -323,6 +325,7 @@ func (up *UpdateManager) AppID() string {
 
 // CurrentlyInstalledVersion returns the currently installed version of the app.
 func (up *UpdateManager) CurrentlyInstalledVersion() string {
+	defer runtime.KeepAlive(up)
 	var len = C.vpkc_get_current_version(up.handle, nil, 0) // includes the null terminator
 	if len == 0 {
 		return ""
@@ -335,12 +338,14 @@ func (up *UpdateManager) CurrentlyInstalledVersion() string {
 // IsPortable returns whether the app is in portable mode. On Windows this can be true or false.
 // On MacOS and Linux this will always be true.
 func (up *UpdateManager) IsPortable() bool {
+	defer runtime.KeepAlive(up)
 	return bool(C.vpkc_is_portable(up.handle))
 }
 
 // UpdatePendingRestart returns an asset if there is an update downloaded which still needs to be
 // applied. You can pass this asset to [UpdateManager.WaitExitThenApplyUpdates] to apply the update.
 func (up *UpdateManager) UpdatePendingRestart() (*Asset, bool) {
+	defer runtime.KeepAlive(up)
 	var asset *C.vpkc_asset_t
 	if !C.vpkc_update_pending_restart(up.handle, &asset) {
 		return nil, false
@@ -351,6 +356,7 @@ func (up *UpdateManager) UpdatePendingRestart() (*Asset, bool) {
 // CheckForUpdates Checks for updates. If there are updates available, this method will return an [UpdateInfo]
 // object containing the latest available release, and any delta updates that can be applied if they are available.
 func (up *UpdateManager) CheckForUpdates() (*UpdateInfo, UpdateStatus, error) {
+	defer runtime.KeepAlive(up)
 	var update_info *C.vpkc_update_info_t
 	check_result := C.vpkc_check_for_updates(up.handle, &update_info)
 	if update_info == nil {
@@ -402,6 +408,8 @@ func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.b
 //   - You should then clean up any state and exit your app. The updater will apply updates and then
 //   - (if [Restart] specified) restart your app. The updater will only wait for 60 seconds before giving up.
 func (up *UpdateManager) WaitForExitThenApplyUpdates(update either[*UpdateInfo, *Asset], options ...upto3[Silent, Restart, UnsafeProcessID]) error {
+	defer runtime.KeepAlive(up)
+	defer runtime.KeepAlive(update)
 	silent, restart, restartPtr, pid, has_pid, defers := assetSilentRestart(options...)
 	defer defers()
 	p_asset := (*C.vpkc_asset_t)(nil)
@@ -459,6 +467,8 @@ func NewSourceCustomCallback(callbacks SourceCustomCallbacks) (*UpdateSource, er
 //   - If there is no delta update available, or there is an error preparing delta
 //     packages, this method will fall back to downloading the full version of the update.
 func (up *UpdateManager) DownloadUpdates(update_info *UpdateInfo, progress func(progress uint)) error {
+	defer runtime.KeepAlive(up)
+	defer runtime.KeepAlive(update_info)
 	var progress_callback cgo.Handle = 0
 	if progress != nil {
 		progress_callback = cgo.NewHandle(progress)
