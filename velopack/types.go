@@ -62,7 +62,7 @@ type SourceCustomCallbacks struct {
 type Asset struct {
 	either[*UpdateInfo, *Asset]
 
-	handle unsafe.Pointer // opaque handle to the underlying C asset, if applicable.
+	handle *native // the underlying C asset, if applicable.
 
 	PackageID     string    // The name or ID of the package containing this release.
 	Version       string    // The version of this release.
@@ -115,7 +115,7 @@ type UpdateOptions struct {
 type UpdateInfo struct {
 	either[*UpdateInfo, *Asset]
 
-	handle unsafe.Pointer // opaque handle to the underlying C update info, if applicable.
+	handle *native // the underlying C update info, if applicable.
 
 	TargetFullRelease *Asset   // The available version that we are updating to.
 	BaseRelease       *Asset   // The base release that this update is based on. This is only available if the update is a delta update.
@@ -142,20 +142,40 @@ type LocatorConfig struct {
 
 // UpdateSource is an opaque handle, to either a FileSource, HTTPSource or _CUSTOM_.
 type UpdateSource struct {
-	handle unsafe.Pointer
+	handle *native
 }
 
 // UpdateManager is an opaque handle.
-//
-// keepAlive note: the native objects behind UpdateManager, UpdateInfo, Asset
-// and UpdateSource are freed by a runtime.AddCleanup once the Go value is
-// unreachable. A method that passes x.handle to C must runtime.KeepAlive(x)
-// until the C call returns: otherwise the GC may run the cleanup while Rust
-// is still using the pointer (a check or download can block for seconds on
-// the network), which is a use-after-free.
 type UpdateManager struct {
-	handle           unsafe.Pointer
-	custom_callbacks []SourceCustomCallbacks // simple keep alive so that callbacks are not garbage collected whilst the UpdateManager is reachable.
+	handle *native
+}
+
+// native holds a pointer to a Velopack object in C memory. UpdateManager,
+// UpdateInfo, Asset and UpdateSource refer to it through a *native, so copies
+// of those structs share it, and the native object is freed by a
+// runtime.AddCleanup on the *native only once no copy can reach it.
+//
+// owner is whatever must outlive ptr: for a borrowed pointer (an Asset inside
+// an UpdateInfo) the native that owns its memory, for an UpdateManager built
+// from an UpdateSource that source's native. Keeping a native reachable keeps
+// its owner reachable too.
+//
+// A method that passes ptr to C must runtime.KeepAlive the *native until the
+// C call returns: otherwise the GC may run the cleanup while Rust is still
+// using the pointer (a check or download can block for seconds on the
+// network), which is a use-after-free.
+type native struct {
+	ptr   unsafe.Pointer
+	owner *native
+}
+
+// pointer returns n's C pointer, or nil for a value that has none (such as an
+// Asset built in Go).
+func (n *native) pointer() unsafe.Pointer {
+	if n == nil {
+		return nil
+	}
+	return n.ptr
 }
 
 type either[A, B any] interface {

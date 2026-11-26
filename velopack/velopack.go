@@ -79,7 +79,7 @@ func go_free_release_feed_callback(_ uintptr, psz_feed *C.char) {
 func go_download_asset_callback(user_data uintptr, asset *C.vpkc_asset_t, psz_local_path *C.char, progress_callback_id C.size_t) C.bool {
 	callbacks := cgo.Handle(user_data).Value().(SourceCustomCallbacks)
 	success := callbacks.DownloadAssetFunc(
-		toAsset(asset, false),
+		borrowedAsset(asset, nil), // only valid until the callback returns
 		C.GoString(psz_local_path),
 		func(progress int16) {
 			C.vpkc_source_report_progress(progress_callback_id, C.int16_t(progress))
@@ -149,12 +149,27 @@ func go_log_callback(_ uintptr, level, psz_message *C.char) {
 	app.Logger(C.GoString(level), C.GoString(psz_message))
 }
 
-func toAsset(asset *C.vpkc_asset_t, owned bool) *Asset {
+// newNative wraps ptr in a native that free releases once no Go value can
+// reach it.
+func newNative(ptr unsafe.Pointer, free func(unsafe.Pointer)) *native {
+	n := &native{ptr: ptr}
+	runtime.AddCleanup(n, free, ptr)
+	return n
+}
+
+func freeAsset(ptr unsafe.Pointer)         { C.vpkc_free_asset((*C.vpkc_asset_t)(ptr)) }
+func freeUpdateInfo(ptr unsafe.Pointer)    { C.vpkc_free_update_info((*C.vpkc_update_info_t)(ptr)) }
+func freeSource(ptr unsafe.Pointer)        { C.vpkc_free_source(ptr) }
+func freeUpdateManager(ptr unsafe.Pointer) { C.vpkc_free_update_manager(ptr) }
+
+// toAsset converts a C asset into an Asset whose handle is the given native,
+// which must point to asset.
+func toAsset(asset *C.vpkc_asset_t, handle *native) *Asset {
 	if asset == nil {
 		return nil
 	}
-	converted := &Asset{
-		handle:        unsafe.Pointer(asset),
+	return &Asset{
+		handle:        handle,
 		PackageID:     C.GoString(asset.PackageId),
 		Version:       C.GoString(asset.Version),
 		Type:          AssetType(C.GoString(asset.Type)),
@@ -165,29 +180,28 @@ func toAsset(asset *C.vpkc_asset_t, owned bool) *Asset {
 		NotesMarkdown: C.GoString(asset.NotesMarkdown),
 		NotesHTML:     C.GoString(asset.NotesHtml),
 	}
-	if owned {
-		runtime.AddCleanup(converted, func(handle unsafe.Pointer) {
-			C.vpkc_free_asset((*C.vpkc_asset_t)(handle))
-		}, converted.handle)
-	}
-	return converted
+}
+
+// borrowedAsset converts an asset whose memory belongs to owner: the Asset
+// keeps owner reachable, so the memory stays valid for as long as the Asset.
+func borrowedAsset(asset *C.vpkc_asset_t, owner *native) *Asset {
+	return toAsset(asset, &native{ptr: unsafe.Pointer(asset), owner: owner})
 }
 
 func (info *UpdateInfo) load(update_info *C.vpkc_update_info_t) *UpdateInfo {
+	handle := info.handle
+	if handle.pointer() != unsafe.Pointer(update_info) {
+		handle = newNative(unsafe.Pointer(update_info), freeUpdateInfo)
+	}
 	var deltas []*Asset
 	var sliced = unsafe.Slice(update_info.DeltasToTarget, update_info.DeltasToTargetCount)
 	for _, delta := range sliced {
-		deltas = append(deltas, toAsset(delta, false))
-	}
-	if info.handle != unsafe.Pointer(update_info) {
-		runtime.AddCleanup(info, func(handle *C.vpkc_update_info_t) {
-			C.vpkc_free_update_info(handle)
-		}, update_info)
+		deltas = append(deltas, borrowedAsset(delta, handle))
 	}
 	*info = UpdateInfo{
-		handle:            unsafe.Pointer(update_info),
-		TargetFullRelease: toAsset(update_info.TargetFullRelease, false),
-		BaseRelease:       toAsset(update_info.BaseRelease, false),
+		handle:            handle,
+		TargetFullRelease: borrowedAsset(update_info.TargetFullRelease, handle),
+		BaseRelease:       borrowedAsset(update_info.BaseRelease, handle),
 		DeltasToTarget:    deltas,
 		IsDowngrade:       bool(update_info.IsDowngrade),
 	}
@@ -204,30 +218,22 @@ func get_last_error() error {
 func NewSourceFile(psz_file_path string) (*UpdateSource, error) {
 	file_path := C.CString(psz_file_path)
 	defer C.free(unsafe.Pointer(file_path))
-	source := new(UpdateSource)
-	source.handle = C.vpkc_new_source_file(file_path)
-	if source.handle == nil {
+	ptr := C.vpkc_new_source_file(file_path)
+	if ptr == nil {
 		return nil, get_last_error()
 	}
-	runtime.AddCleanup(source, func(handle unsafe.Pointer) {
-		C.vpkc_free_source(handle)
-	}, source.handle)
-	return source, nil
+	return &UpdateSource{handle: newNative(unsafe.Pointer(ptr), freeSource)}, nil
 }
 
 // NewSourceHTTP creates a new HttpSource update source for the given HTTP URL of a remote update server.
 func NewSourceHTTP(psz_http_url string) (*UpdateSource, error) {
 	http_url := C.CString(psz_http_url)
 	defer C.free(unsafe.Pointer(http_url))
-	source := new(UpdateSource)
-	source.handle = C.vpkc_new_source_http_url(http_url)
-	if source.handle == nil {
+	ptr := C.vpkc_new_source_http_url(http_url)
+	if ptr == nil {
 		return nil, get_last_error()
 	}
-	runtime.AddCleanup(source, func(handle unsafe.Pointer) {
-		C.vpkc_free_source(handle)
-	}, source.handle)
-	return source, nil
+	return &UpdateSource{handle: newNative(unsafe.Pointer(ptr), freeSource)}, nil
 }
 
 func optionsLocator(options ...updateOptionsAndLocatorConfig) (*C.vpkc_update_options_t, *C.vpkc_locator_config_t) {
@@ -287,78 +293,77 @@ func NewUpdateManager(psz_url_or_path string, options ...updateOptionsAndLocator
 	p_options, p_locator := optionsLocator(options...)
 	url_or_path := C.CString(psz_url_or_path)
 	defer C.free(unsafe.Pointer(url_or_path))
-	manager := new(UpdateManager)
-	if !C.vpkc_new_update_manager(url_or_path, p_options, p_locator, &manager.handle) {
+	var ptr unsafe.Pointer
+	if !C.vpkc_new_update_manager(url_or_path, p_options, p_locator, &ptr) {
 		return nil, get_last_error()
 	}
-	runtime.AddCleanup(manager, func(handle unsafe.Pointer) {
-		C.vpkc_free_update_manager(handle)
-	}, manager.handle)
-	return manager, nil
+	return &UpdateManager{handle: newNative(ptr, freeUpdateManager)}, nil
 }
 
 // NewUpdateManagerFromSource creates a new UpdateManager instance using the given UpdateSource.
 func NewUpdateManagerFromSource(source *UpdateSource, options ...updateOptionsAndLocatorConfig) (*UpdateManager, error) {
-	defer runtime.KeepAlive(source)
+	defer runtime.KeepAlive(source.handle)
 	p_options, p_locator := optionsLocator(options...)
-	manager := new(UpdateManager)
-	if !C.vpkc_new_update_manager_with_source(source.handle, p_options, p_locator, &manager.handle) {
+	var ptr unsafe.Pointer
+	if !C.vpkc_new_update_manager_with_source(source.handle.ptr, p_options, p_locator, &ptr) {
 		return nil, get_last_error()
 	}
-	runtime.AddCleanup(manager, func(handle unsafe.Pointer) {
-		C.vpkc_free_update_manager(handle)
-	}, manager.handle)
-	return manager, nil
+	handle := newNative(ptr, freeUpdateManager)
+	// Velopack.h: a custom source's callbacks "must be valid for the lifetime
+	// of any UpdateManager's that use this source", so the manager keeps the
+	// source (and with it the callbacks' cgo.Handle) reachable.
+	handle.owner = source.handle
+	return &UpdateManager{handle: handle}, nil
 }
 
 // AppID returns the currently installed app id.
 func (up *UpdateManager) AppID() string {
-	defer runtime.KeepAlive(up)
-	var len = C.vpkc_get_app_id(up.handle, nil, 0) // includes the null terminator
+	defer runtime.KeepAlive(up.handle)
+	var len = C.vpkc_get_app_id(up.handle.ptr, nil, 0) // includes the null terminator
 	if len == 0 {
 		return ""
 	}
 	var buf = make([]byte, len)
-	C.vpkc_get_app_id(up.handle, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
+	C.vpkc_get_app_id(up.handle.ptr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
 	return string(buf[:len-1]) // strip the null terminator
 }
 
 // CurrentlyInstalledVersion returns the currently installed version of the app.
 func (up *UpdateManager) CurrentlyInstalledVersion() string {
-	defer runtime.KeepAlive(up)
-	var len = C.vpkc_get_current_version(up.handle, nil, 0) // includes the null terminator
+	defer runtime.KeepAlive(up.handle)
+	var len = C.vpkc_get_current_version(up.handle.ptr, nil, 0) // includes the null terminator
 	if len == 0 {
 		return ""
 	}
 	var buf = make([]byte, len)
-	C.vpkc_get_current_version(up.handle, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
+	C.vpkc_get_current_version(up.handle.ptr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len))
 	return string(buf[:len-1]) // strip the null terminator
 }
 
 // IsPortable returns whether the app is in portable mode. On Windows this can be true or false.
 // On MacOS and Linux this will always be true.
 func (up *UpdateManager) IsPortable() bool {
-	defer runtime.KeepAlive(up)
-	return bool(C.vpkc_is_portable(up.handle))
+	defer runtime.KeepAlive(up.handle)
+	return bool(C.vpkc_is_portable(up.handle.ptr))
 }
 
 // UpdatePendingRestart returns an asset if there is an update downloaded which still needs to be
 // applied. You can pass this asset to [UpdateManager.WaitExitThenApplyUpdates] to apply the update.
 func (up *UpdateManager) UpdatePendingRestart() (*Asset, bool) {
-	defer runtime.KeepAlive(up)
+	defer runtime.KeepAlive(up.handle)
 	var asset *C.vpkc_asset_t
-	if !C.vpkc_update_pending_restart(up.handle, &asset) {
+	if !C.vpkc_update_pending_restart(up.handle.ptr, &asset) {
 		return nil, false
 	}
-	return toAsset(asset, true), true
+	return toAsset(asset, newNative(unsafe.Pointer(asset), freeAsset)), true
 }
 
 // CheckForUpdates Checks for updates. If there are updates available, this method will return an [UpdateInfo]
 // object containing the latest available release, and any delta updates that can be applied if they are available.
 func (up *UpdateManager) CheckForUpdates() (*UpdateInfo, UpdateStatus, error) {
-	defer runtime.KeepAlive(up)
+	defer runtime.KeepAlive(up.handle)
 	var update_info *C.vpkc_update_info_t
-	check_result := C.vpkc_check_for_updates(up.handle, &update_info)
+	check_result := C.vpkc_check_for_updates(up.handle.ptr, &update_info)
 	if update_info == nil {
 		if UpdateStatus(check_result) == -1 {
 			return nil, 0, get_last_error()
@@ -408,29 +413,33 @@ func assetSilentRestart(options ...upto3[Silent, Restart, UnsafeProcessID]) (C.b
 //   - You should then clean up any state and exit your app. The updater will apply updates and then
 //   - (if [Restart] specified) restart your app. The updater will only wait for 60 seconds before giving up.
 func (up *UpdateManager) WaitForExitThenApplyUpdates(update either[*UpdateInfo, *Asset], options ...upto3[Silent, Restart, UnsafeProcessID]) error {
-	defer runtime.KeepAlive(up)
-	defer runtime.KeepAlive(update)
+	defer runtime.KeepAlive(up.handle)
 	silent, restart, restartPtr, pid, has_pid, defers := assetSilentRestart(options...)
 	defer defers()
-	p_asset := (*C.vpkc_asset_t)(nil)
-	if update != nil {
-		switch update := update.(type) {
-		case *Asset:
-			p_asset = (*C.vpkc_asset_t)(update.handle)
-		case *UpdateInfo:
-			p_asset = (*C.vpkc_asset_t)(update.TargetFullRelease.handle)
+	var asset *native
+	switch update := update.(type) {
+	case *Asset:
+		if update != nil {
+			asset = update.handle
+		}
+	case *UpdateInfo:
+		if update != nil && update.TargetFullRelease != nil {
+			asset = update.TargetFullRelease.handle
 		}
 	}
+	defer runtime.KeepAlive(asset)
+	p_asset := (*C.vpkc_asset_t)(asset.pointer())
 	var restart_args_count C.size_t
 	if restart > 0 {
 		restart_args_count = C.size_t(restart - 1) // -1 for the null terminator slot, not a real arg
 	}
 	if has_pid {
-		if !C.vpkc_unsafe_apply_updates(up.handle, p_asset, silent, C.uint32_t(pid), restart != 0, restartPtr, restart_args_count) {
+		if !C.vpkc_unsafe_apply_updates(up.handle.ptr, p_asset, silent, C.uint32_t(pid), restart != 0, restartPtr, restart_args_count) {
 			return get_last_error()
 		}
+		return nil
 	}
-	if !C.vpkc_wait_exit_then_apply_updates(up.handle, p_asset, silent, restart != 0, restartPtr, restart_args_count) {
+	if !C.vpkc_wait_exit_then_apply_updates(up.handle.ptr, p_asset, silent, restart != 0, restartPtr, restart_args_count) {
 		return get_last_error()
 	}
 	return nil
@@ -447,15 +456,25 @@ func NewSourceCustomCallback(callbacks SourceCustomCallbacks) (*UpdateSource, er
 	if callbacks.DownloadAssetFunc == nil {
 		return nil, errors.New("DownloadAssetFunc must not be nil")
 	}
-	var source = new(UpdateSource)
-	source.handle = C.go_vpkc_new_source_custom_callback(C.uintptr_t(cgo.NewHandle(callbacks)))
-	if source.handle == nil {
+	callbacks_handle := cgo.NewHandle(callbacks)
+	ptr := C.go_vpkc_new_source_custom_callback(C.uintptr_t(callbacks_handle))
+	if ptr == nil {
+		callbacks_handle.Delete()
 		return nil, get_last_error()
 	}
-	runtime.AddCleanup(source, func(handle unsafe.Pointer) {
-		C.vpkc_free_source(handle)
-	}, source.handle)
-	return source, nil
+	handle := &native{ptr: unsafe.Pointer(ptr)}
+	// Any UpdateManager using this source keeps handle reachable, so once
+	// this runs no manager can call the callbacks any more.
+	runtime.AddCleanup(handle, func(c customSource) {
+		C.vpkc_free_source(c.ptr)
+		c.callbacks.Delete()
+	}, customSource{unsafe.Pointer(ptr), callbacks_handle})
+	return &UpdateSource{handle: handle}, nil
+}
+
+type customSource struct {
+	ptr       unsafe.Pointer
+	callbacks cgo.Handle
 }
 
 // DownloadUpdates downloads the specified updates to the local app packages directory.
@@ -467,24 +486,26 @@ func NewSourceCustomCallback(callbacks SourceCustomCallbacks) (*UpdateSource, er
 //   - If there is no delta update available, or there is an error preparing delta
 //     packages, this method will fall back to downloading the full version of the update.
 func (up *UpdateManager) DownloadUpdates(update_info *UpdateInfo, progress func(progress uint)) error {
-	defer runtime.KeepAlive(up)
-	defer runtime.KeepAlive(update_info)
+	defer runtime.KeepAlive(up.handle)
 	var progress_callback cgo.Handle = 0
 	if progress != nil {
 		progress_callback = cgo.NewHandle(progress)
+		defer progress_callback.Delete()
 	}
-	var info_handle *C.vpkc_update_info_t
+	var info *native
 	if update_info != nil {
-		info_handle = (*C.vpkc_update_info_t)(update_info.handle)
+		info = update_info.handle
 	}
-	if !C.go_vpkc_download_updates(up.handle,
+	defer runtime.KeepAlive(info)
+	info_handle := (*C.vpkc_update_info_t)(info.pointer())
+	if !C.go_vpkc_download_updates(up.handle.ptr,
 		info_handle,
 		C.uintptr_t(progress_callback),
 	) {
 		return get_last_error()
 	}
-	if update_info != nil {
-		update_info.load((*C.vpkc_update_info_t)(update_info.handle))
+	if info_handle != nil {
+		update_info.load(info_handle)
 	}
 	return nil
 }
